@@ -1,9 +1,9 @@
 {
-    "input_training_file": "datasets/scotus/train.txt",
-    "input_validation_file": "datasets/scotus/val.txt",
+    "input_training_file": "datasets/scotus/hubert500/train.txt",
+    "input_validation_file": "datasets/scotus/hubert500/val.txt",
 
     "resblock": "1",
-    "num_gpus": 0,
+    "num_gpus": 1,
     "batch_size": 16,
     "learning_rate": 0.0002,
     "adam_b1": 0.8,
@@ -12,7 +12,7 @@
     "seed": 1234,
 
     "segment_size": 16640,
-    "multispkr": "_",
+    "multispkr": "scotus",
 
     "f0_stats": "datasets/scotus/f0_stats.pt",
     "f0_normalize": true,
@@ -52,7 +52,7 @@
     "lambda_commit": 0.02,
     "sampling_rate": 16000,
 
-    "num_workers": 4,
+    "num_workers": 32,
 
     "dist_config": {
         "dist_backend": "nccl",

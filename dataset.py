@@ -16,11 +16,14 @@ import soundfile as sf
 import torch
 import torch.utils.data
 import torch.utils.data
+import librosa
 from librosa.filters import mel as librosa_mel_fn
 from librosa.util import normalize
 
 MAX_WAV_VALUE = 32768.0
 
+import logging
+logger = logging.getLogger(__name__)
 
 def get_yaapt_f0(audio, rate=16000, interp=False):
     frame_length = 20.0
@@ -148,6 +151,8 @@ def parse_speaker(path, method):
         return path.name.split('_')[0]
     elif method == 'single':
         return 'A'
+    elif method == 'scotus':
+        return path.name.split('.')[2]
     elif callable(method):
         return method(path)
     else:
@@ -276,7 +281,8 @@ class CodeDataset(torch.utils.data.Dataset):
         if self.f0:
             try:
                 f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=self.f0_interp)
-            except:
+            except Exception as e:
+                print(e)
                 f0 = np.zeros((1, 1, audio.shape[-1] // 80))
             f0 = f0.astype(np.float32)
             feats['f0'] = f0.squeeze(0)
@@ -400,7 +406,8 @@ class F0Dataset(torch.utils.data.Dataset):
         feats = {}
         try:
             f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=self.f0_interp)
-        except:
+        except Exception as e:
+            print(e)
             f0 = np.zeros((1, 1, audio.shape[-1] // 80))
         f0 = f0.astype(np.float32)
         feats['f0'] = f0.squeeze(0)

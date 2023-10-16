@@ -177,6 +177,7 @@ def train(rank, a, h):
 
 def main():
     print('Initializing Training Process..')
+    import os
 
     parser = argparse.ArgumentParser()
 
@@ -190,7 +191,7 @@ def main():
     parser.add_argument('--summary_interval', default=100, type=int)
     parser.add_argument('--validation_interval', default=1000, type=int)
     parser.add_argument('--fine_tuning', default=False, type=bool)
-    parser.add_argument('--local_rank', default=0, type=int)
+    #parser.add_argument('--local_rank', default=0, type=int)
 
     a = parser.parse_args()
 
@@ -210,7 +211,7 @@ def main():
     else:
         pass
 
-    train(a.local_rank, a, h)
+    train(int(os.environ['LOCAL_RANK']), a, h)
 
 
 if __name__ == '__main__':
