@@ -130,7 +130,7 @@ class CodeGenerator(Generator):
         self.multispkr = h.get('multispkr', None)
 
         if self.multispkr:
-            self.spkr = nn.Embedding(200, h.embedding_dim)
+            self.spkr = nn.Embedding(1632, h.embedding_dim)
 
         self.encoder = None
         self.vq = None
