@@ -100,7 +100,7 @@ def train(rank, local_rank, a, h):
 
     train_sampler = DistributedSampler(trainset) if h.num_gpus > 1 else None
 
-    train_loader = DataLoader(trainset, num_workers=0, shuffle=False, sampler=train_sampler,
+    train_loader = DataLoader(trainset, num_workers=32, shuffle=False, sampler=train_sampler,
                               batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
     if rank == 0:

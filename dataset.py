@@ -280,6 +280,7 @@ class CodeDataset(torch.utils.data.Dataset):
 
         if self.f0:
             try:
+                #f0 = np.zeros((1, 1, audio.shape[-1] // 80))
                 f0 = get_yaapt_f0(audio.numpy(), rate=self.sampling_rate, interp=self.f0_interp)
             except Exception as e:
                 print(e)
