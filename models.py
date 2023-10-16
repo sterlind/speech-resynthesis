@@ -121,15 +121,17 @@ class Generator(torch.nn.Module):
         remove_weight_norm(self.conv_pre)
         remove_weight_norm(self.conv_post)
 
-
 class CodeGenerator(Generator):
     def __init__(self, h):
         super().__init__(h)
         self.dict = nn.Embedding(h.num_embeddings, h.embedding_dim)
         self.f0 = h.get('f0', None)
         self.multispkr = h.get('multispkr', None)
+        self.use_embedder = h.get('use_embedder', False)
 
-        if self.multispkr:
+        if self.use_embedder:
+            self.spkr = nn.Linear(192, h.embedding_dim)
+        elif self.multispkr:
             self.spkr = nn.Embedding(1632, h.embedding_dim)
 
         self.encoder = None
@@ -211,7 +213,8 @@ class CodeGenerator(Generator):
                 kwargs['f0'] = self._upsample(kwargs['f0'], x.shape[-1])
             x = torch.cat([x, kwargs['f0']], dim=1)
 
-        if self.multispkr:
+        #if self.multispkr:
+        if 'spkr' in kwargs:
             spkr = self.spkr(kwargs['spkr']).transpose(1, 2)
             spkr = self._upsample(spkr, x.shape[-1])
             x = torch.cat([x, spkr], dim=1)

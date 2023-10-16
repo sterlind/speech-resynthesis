@@ -158,11 +158,12 @@ def parse_speaker(path, method):
     else:
         raise NotImplementedError()
 
+from speechbrain.pretrained import EncoderClassifier
 
 class CodeDataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, code_hop_size, n_fft, num_mels,
                  hop_size, win_size, sampling_rate, fmin, fmax, split=True, n_cache_reuse=1,
-                 device=None, fmax_loss=None, f0=None, multispkr=False, pad=None,
+                 device=None, fmax_loss=None, f0=None, multispkr=False, embedder:EncoderClassifier=None, pad=None,
                  f0_stats=None, f0_normalize=False, f0_feats=False, f0_median=False,
                  f0_interp=False, vqvae=False):
         self.audio_files, self.codes = training_files
@@ -192,6 +193,7 @@ class CodeDataset(torch.utils.data.Dataset):
         if f0_stats:
             self.f0_stats = torch.load(f0_stats)
         self.multispkr = multispkr
+        self.embedder = embedder
         self.pad = pad
         if self.multispkr:
             spkrs = [parse_speaker(f, self.multispkr) for f in self.audio_files]
@@ -288,7 +290,12 @@ class CodeDataset(torch.utils.data.Dataset):
             f0 = f0.astype(np.float32)
             feats['f0'] = f0.squeeze(0)
 
-        if self.multispkr:
+        if self.embedder is not None:
+            device = next(iter(self.embedder.parameters())).device
+            with torch.no_grad():
+                embedding = self.embedder.encode_batch(audio.to(device), normalize=True).view(1, -1).detach().cpu().numpy()
+            feats['spkr'] = embedding
+        elif self.multispkr:
             feats['spkr'] = self._get_spkr(index)
 
         if self.f0_normalize:

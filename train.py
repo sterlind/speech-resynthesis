@@ -26,6 +26,7 @@ from models import CodeGenerator, MultiPeriodDiscriminator, MultiScaleDiscrimina
     discriminator_loss
 from utils import plot_spectrogram, scan_checkpoint, load_checkpoint, \
     save_checkpoint, build_env, AttrDict
+from speechbrain.pretrained import EncoderClassifier
 
 torch.backends.cudnn.benchmark = True
 
@@ -43,6 +44,7 @@ def train(rank, local_rank, a, h):
     device = torch.device('cuda:{:d}'.format(local_rank))
 
     generator = CodeGenerator(h).to(device)
+    embedder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")#.to(device)
     mpd = MultiPeriodDiscriminator().to(device)
     msd = MultiScaleDiscriminator().to(device)
 
@@ -92,7 +94,7 @@ def train(rank, local_rank, a, h):
 
     trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
                            h.win_size, h.sampling_rate, h.fmin, h.fmax, n_cache_reuse=0, fmax_loss=h.fmax_for_loss,
-                           device=device, f0=h.get('f0', None), multispkr=h.get('multispkr', None),
+                           device=device, f0=h.get('f0', None), multispkr=h.get('multispkr', None), embedder=embedder,
                            f0_stats=h.get('f0_stats', None),
                            f0_normalize=h.get('f0_normalize', False), f0_feats=h.get('f0_feats', False),
                            f0_median=h.get('f0_median', False), f0_interp=h.get('f0_interp', False),
@@ -107,7 +109,7 @@ def train(rank, local_rank, a, h):
         validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
                                h.win_size, h.sampling_rate, h.fmin, h.fmax, False, n_cache_reuse=0,
                                fmax_loss=h.fmax_for_loss, device=device, f0=h.get('f0', None),
-                               multispkr=h.get('multispkr', None),
+                               multispkr=h.get('multispkr', None), embedder=embedder,
                                f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),
                                f0_feats=h.get('f0_feats', False), f0_median=h.get('f0_median', False),
                                f0_interp=h.get('f0_interp', False), vqvae=h.get('code_vq_params', False))
