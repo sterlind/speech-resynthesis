@@ -43,6 +43,23 @@ class AudioSamplerConfig:
 def dynamic_range_compression(x: torch.Tensor, C=1, clip_val=1e-5):
     return torch.log(torch.clamp(x, min=clip_val) * C)
 
+def mel_spectrogram(y: torch.Tensor, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
+    mel = T.MelSpectrogram(
+        sample_rate=sampling_rate,
+        n_fft=n_fft,
+        n_mels=num_mels,
+        f_min=fmin,
+        f_max=fmax,
+        win_length=win_size,
+        hop_length=hop_size,
+        window_fn=torch.hann_window,
+        wkwargs={"device": y.device},
+        pad_mode="reflect",
+        normalized=False
+    ).to(y.device)
+    y = mel(y)
+    return dynamic_range_compression(y)
+
 class AudioSampler:
     def __init__(self, args: AudioSamplerConfig, embedder: EncoderClassifier):
         self.args = args
@@ -54,22 +71,9 @@ class AudioSampler:
         self.chirp_len = self.args.sampling_rate // self.args.code_sample_freq
         self.chirps_per_segment = self.args.segment_size // self.chirp_len
 
-        self.mel = T.MelSpectrogram(
-            sample_rate=self.args.sampling_rate,
-            n_fft=self.args.n_fft,
-            n_mels=self.args.n_mels,
-            f_min=self.args.fmin,
-            f_max=self.args.sampling_rate // 2,
-            win_length=self.args.win_size,
-            hop_length=self.args.hop_size,
-            window_fn=torch.hann_window,
-            pad_mode="reflect",
-            normalized=False
-        )
-
     def process(self, audio: torch.Tensor, codes: torch.Tensor, sampling_ratio: float = 0.8):
         # Compute f0 over the whole audio clip.
-        f0 = torch.tensor(get_yaapt_f0(audio[None].numpy(), self.args.sampling_rate, interp=False))[0, 0]
+        f0 = torch.tensor(get_yaapt_f0(audio[None].numpy(), self.args.sampling_rate, interp=False))[0, 0].float()
         f0_mean, f0_std = f0[f0 > 0.].mean(), f0[f0 > 0.].std()
 
         # Normalize f0 (where defined):
@@ -95,7 +99,16 @@ class AudioSampler:
         audio_idxs = audio_seg_range[None, :] + chirp_idxs[:, None] * self.chirp_len
         segs_audio = audio[audio_idxs]
 
-        segs_mel = dynamic_range_compression(self.mel(segs_audio.float()))
+        segs_mel = mel_spectrogram(
+            segs_audio,
+            self.args.n_fft,
+            self.args.n_mels,
+            self.args.sampling_rate,
+            self.args.hop_size,
+            self.args.win_size,
+            self.args.fmin,
+            self.args.fmax
+        )
 
         codes_seg_range = torch.arange(self.chirps_per_segment)
         codes_idxs = codes_seg_range[None, :] + chirp_idxs[:, None]
@@ -109,8 +122,9 @@ MAX_WAV_VALUE = 32768.0
 import librosa
 
 class CodeDataset2(IterableDataset):
-    def __init__(self, training_files, segment_size, hop_size, n_fft, num_mels, win_size, sampling_rate, fmin, fmax):
+    def __init__(self, training_files, embedder: EncoderClassifier, segment_size, hop_size, n_fft, num_mels, win_size, sampling_rate, fmin, fmax, sample_ratio: float=0.8):
         self.audio_files, self.codes = training_files
+        self.sample_ratio = sample_ratio
         conf = AudioSamplerConfig(
             code_sample_freq=50,
             segment_size=segment_size,
@@ -122,7 +136,7 @@ class CodeDataset2(IterableDataset):
             hop_size=hop_size,
             win_size=win_size
         )
-        self.embedder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
+        self.embedder = embedder#EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
         self.sampler = AudioSampler(conf, self.embedder)
 
     def __iter__(self):
@@ -139,12 +153,12 @@ class CodeDataset2(IterableDataset):
 
         all_codes = self.codes[index]
 
-        f0s, audios, mels, codes, speaker_embedding = self.sampler.process(all_audio, all_codes)
+        f0s, audios, mels, codes, speaker_embedding = self.sampler.process(torch.tensor(all_audio).float(), all_codes, self.sample_ratio)
 
         feats = [{
-            "f0": f0,
+            "f0": f0[None],
             "code": code,
-            "spkr": speaker_embedding
+            "spkr": speaker_embedding[None]
             } for (f0, code) in zip(f0s, codes)]
         
         for feat, audio, mel in zip(feats, audios, mels):

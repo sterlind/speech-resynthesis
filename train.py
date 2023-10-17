@@ -21,16 +21,16 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DistributedSampler, DataLoader
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
-from dataset import CodeDataset, mel_spectrogram, get_dataset_filelist
+from dataset import CodeDataset, get_dataset_filelist # , get_mel_spectrogram
 from models import CodeGenerator, MultiPeriodDiscriminator, MultiScaleDiscriminator, feature_loss, generator_loss, \
     discriminator_loss
 from utils import plot_spectrogram, scan_checkpoint, load_checkpoint, \
     save_checkpoint, build_env, AttrDict
 from speechbrain.pretrained import EncoderClassifier
-from dataset2 import CodeDataset2
+from dataset2 import CodeDataset2, mel_spectrogram
 
 torch.backends.cudnn.benchmark = True
-
+torch.set_float32_matmul_precision('high')
 
 def train(rank, local_rank, a, h):
     if h.num_gpus > 1:
@@ -45,9 +45,12 @@ def train(rank, local_rank, a, h):
     device = torch.device('cuda:{:d}'.format(local_rank))
 
     generator = CodeGenerator(h).to(device)
+    generator = torch.compile(generator)
     embedder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")#.to(device)
     mpd = MultiPeriodDiscriminator().to(device)
+    mpd = torch.compile(mpd)
     msd = MultiScaleDiscriminator().to(device)
+    msd = torch.compile(msd)
 
     if rank == 0:
         print(generator)
@@ -100,21 +103,22 @@ def train(rank, local_rank, a, h):
     #                        f0_normalize=h.get('f0_normalize', False), f0_feats=h.get('f0_feats', False),
     #                        f0_median=h.get('f0_median', False), f0_interp=h.get('f0_interp', False),
     #                        vqvae=h.get('code_vq_params', False))
-    trainset = CodeDataset2(training_filelist, h.segment_size, h.hop_size, h.n_fft, h.num_mels, h.win_size, h.sampling_rate, h.fmin, h.fmax)
+    trainset = CodeDataset2(training_filelist, embedder, h.segment_size, h.hop_size, h.n_fft, h.num_mels, h.win_size, h.sampling_rate, h.fmin, h.fmax, 0.8)
 
     train_sampler = DistributedSampler(trainset) if h.num_gpus > 1 else None
 
-    train_loader = DataLoader(trainset, num_workers=2, shuffle=False, sampler=train_sampler,
+    train_loader = DataLoader(trainset, num_workers=4, shuffle=False, sampler=train_sampler,
                               batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
     if rank == 0:
-        validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
-                               h.win_size, h.sampling_rate, h.fmin, h.fmax, False, n_cache_reuse=0,
-                               fmax_loss=h.fmax_for_loss, device=device, f0=h.get('f0', None),
-                               multispkr=h.get('multispkr', None), embedder=embedder,
-                               f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),
-                               f0_feats=h.get('f0_feats', False), f0_median=h.get('f0_median', False),
-                               f0_interp=h.get('f0_interp', False), vqvae=h.get('code_vq_params', False))
+        validset = CodeDataset2(validation_filelist, embedder, h.segment_size, h.hop_size, h.n_fft, h.num_mels, h.win_size, h.sampling_rate, h.fmin, h.fmax, 0.1)
+        # validset = CodeDataset(validation_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
+        #                        h.win_size, h.sampling_rate, h.fmin, h.fmax, False, n_cache_reuse=0,
+        #                        fmax_loss=h.fmax_for_loss, device=device, f0=h.get('f0', None),
+        #                        multispkr=h.get('multispkr', None), embedder=embedder,
+        #                        f0_stats=h.get('f0_stats', None), f0_normalize=h.get('f0_normalize', False),
+        #                        f0_feats=h.get('f0_feats', False), f0_median=h.get('f0_median', False),
+        #                        f0_interp=h.get('f0_interp', False), vqvae=h.get('code_vq_params', False))
         validation_loader = DataLoader(validset, num_workers=0, shuffle=False, sampler=None,
                                        batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
@@ -140,7 +144,8 @@ def train(rank, local_rank, a, h):
             y = y.unsqueeze(1)
             x = {k: torch.autograd.Variable(v.to(device, non_blocking=False)) for k, v in x.items()}
 
-            y_g_hat = generator(**x)
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                y_g_hat = generator(**x)
             if h.get('f0_vq_params', None) or h.get('code_vq_params', None):
                 y_g_hat, commit_losses, metrics = y_g_hat
 
@@ -158,11 +163,13 @@ def train(rank, local_rank, a, h):
             optim_d.zero_grad()
 
             # MPD
-            y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
             loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
 
             # MSD
-            y_ds_hat_r, y_ds_hat_g, _, _ = msd(y, y_g_hat.detach())
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                y_ds_hat_r, y_ds_hat_g, _, _ = msd(y, y_g_hat.detach())
             loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
 
             loss_disc_all = loss_disc_s + loss_disc_f
@@ -176,8 +183,9 @@ def train(rank, local_rank, a, h):
             # L1 Mel-Spectrogram Loss
             loss_mel = F.l1_loss(y_mel, y_g_hat_mel) * 45
 
-            y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
-            y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y, y_g_hat)
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
+                y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y, y_g_hat)
             loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
             loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
             loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
@@ -230,16 +238,19 @@ def train(rank, local_rank, a, h):
                         sw.add_scalar("training/code_usage", code_metrics['usage'].item(), steps)
 
                 # Validation
-                if steps % a.validation_interval == 0:  # and steps != 0:
+                if steps % a.validation_interval == 0 and steps != 0:
                     generator.eval()
                     torch.cuda.empty_cache()
                     val_err_tot = 0
                     with torch.no_grad():
                         for j, batch in enumerate(validation_loader):
+                            if j > 4:
+                                break
                             x, y, _, y_mel = batch
                             x = {k: v.to(device, non_blocking=False) for k, v in x.items()}
 
-                            y_g_hat = generator(**x)
+                            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                                y_g_hat = generator(**x)
                             if h.get('f0_vq_params', None) or h.get('code_vq_params', None):
                                 y_g_hat, commit_losses, _ = y_g_hat
 

@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Training",
+            "type": "python",
+            "request": "launch",
+            "program": "train.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--checkpoint_path",
+                "checkpoints/sc_hubert",
+                "--config",
+                "configs/scotus/hubert500_lut.json"
+            ],
+            "env": {
+                "WORLD_SIZE": "1",
+                "RANK": "0",
+            }
+        }
+    ]
+}
