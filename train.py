@@ -27,6 +27,7 @@ from models import CodeGenerator, MultiPeriodDiscriminator, MultiScaleDiscrimina
 from utils import plot_spectrogram, scan_checkpoint, load_checkpoint, \
     save_checkpoint, build_env, AttrDict
 from speechbrain.pretrained import EncoderClassifier
+from dataset2 import CodeDataset2
 
 torch.backends.cudnn.benchmark = True
 
@@ -92,17 +93,18 @@ def train(rank, local_rank, a, h):
 
     training_filelist, validation_filelist = get_dataset_filelist(h)
 
-    trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
-                           h.win_size, h.sampling_rate, h.fmin, h.fmax, n_cache_reuse=0, fmax_loss=h.fmax_for_loss,
-                           device=device, f0=h.get('f0', None), multispkr=h.get('multispkr', None), embedder=embedder,
-                           f0_stats=h.get('f0_stats', None),
-                           f0_normalize=h.get('f0_normalize', False), f0_feats=h.get('f0_feats', False),
-                           f0_median=h.get('f0_median', False), f0_interp=h.get('f0_interp', False),
-                           vqvae=h.get('code_vq_params', False))
+    # trainset = CodeDataset(training_filelist, h.segment_size, h.code_hop_size, h.n_fft, h.num_mels, h.hop_size,
+    #                        h.win_size, h.sampling_rate, h.fmin, h.fmax, n_cache_reuse=0, fmax_loss=h.fmax_for_loss,
+    #                        device=device, f0=h.get('f0', None), multispkr=h.get('multispkr', None), embedder=embedder,
+    #                        f0_stats=h.get('f0_stats', None),
+    #                        f0_normalize=h.get('f0_normalize', False), f0_feats=h.get('f0_feats', False),
+    #                        f0_median=h.get('f0_median', False), f0_interp=h.get('f0_interp', False),
+    #                        vqvae=h.get('code_vq_params', False))
+    trainset = CodeDataset2(training_filelist, h.segment_size, h.hop_size, h.n_fft, h.num_mels, h.win_size, h.sampling_rate, h.fmin, h.fmax)
 
     train_sampler = DistributedSampler(trainset) if h.num_gpus > 1 else None
 
-    train_loader = DataLoader(trainset, num_workers=32, shuffle=False, sampler=train_sampler,
+    train_loader = DataLoader(trainset, num_workers=2, shuffle=False, sampler=train_sampler,
                               batch_size=h.batch_size, pin_memory=True, drop_last=True)
 
     if rank == 0:

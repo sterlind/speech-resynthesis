@@ -3,7 +3,7 @@ import soundfile
 import random
 import torch
 import torchaudio.transforms as T
-from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset
 import numpy as np
 import amfm_decompy.basic_tools as basic
 import amfm_decompy.pYAAPT as pYAAPT
@@ -95,11 +95,57 @@ class AudioSampler:
         audio_idxs = audio_seg_range[None, :] + chirp_idxs[:, None] * self.chirp_len
         segs_audio = audio[audio_idxs]
 
-        segs_mel = self.mel(segs_audio.float())
+        segs_mel = dynamic_range_compression(self.mel(segs_audio.float()))
 
         codes_seg_range = torch.arange(self.chirps_per_segment)
         codes_idxs = codes_seg_range[None, :] + chirp_idxs[:, None]
         segs_codes = codes[codes_idxs]
-        return segs_f0, segs_audio, dynamic_range_compression(segs_mel), segs_codes, speaker_embedding[None].repeat(len(chirp_idxs), 1)
+        return segs_f0, segs_audio, segs_mel, segs_codes, speaker_embedding
+
         #f0s = f0_norm[chirp_idxs * n_f0s_per_chirp: (chirp_idxs + self.chirps_per_segment) * n_f0s_per_chirp]
         #return f0s
+
+MAX_WAV_VALUE = 32768.0
+import librosa
+
+class CodeDataset2(IterableDataset):
+    def __init__(self, training_files, segment_size, hop_size, n_fft, num_mels, win_size, sampling_rate, fmin, fmax):
+        self.audio_files, self.codes = training_files
+        conf = AudioSamplerConfig(
+            code_sample_freq=50,
+            segment_size=segment_size,
+            sampling_rate=sampling_rate,
+            fmin=fmin,
+            fmax=fmax,
+            n_fft=n_fft,
+            n_mels=num_mels,
+            hop_size=hop_size,
+            win_size=win_size
+        )
+        self.embedder = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
+        self.sampler = AudioSampler(conf, self.embedder)
+
+    def __iter__(self):
+        indices = list(range(len(self.audio_files)))
+        random.shuffle(indices)
+        for index in indices:
+            yield from self.for_sample(index)
+
+    def for_sample(self, index: int):
+        filename = self.audio_files[index]
+        all_audio, sr = soundfile.read(filename)
+        all_audio = all_audio / MAX_WAV_VALUE
+        all_audio = librosa.util.normalize(all_audio) * 0.95
+
+        all_codes = self.codes[index]
+
+        f0s, audios, mels, codes, speaker_embedding = self.sampler.process(all_audio, all_codes)
+
+        feats = [{
+            "f0": f0,
+            "code": code,
+            "spkr": speaker_embedding
+            } for (f0, code) in zip(f0s, codes)]
+        
+        for feat, audio, mel in zip(feats, audios, mels):
+            yield feat, audio, str(filename), mel
