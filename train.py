@@ -238,7 +238,7 @@ def train(rank, local_rank, a, h):
                         sw.add_scalar("training/code_usage", code_metrics['usage'].item(), steps)
 
                 # Validation
-                if steps % a.validation_interval == 0 and steps != 0:
+                if steps % a.validation_interval == 0:
                     generator.eval()
                     torch.cuda.empty_cache()
                     val_err_tot = 0
@@ -271,11 +271,11 @@ def train(rank, local_rank, a, h):
                                     sw.add_audio('gt/y_{}'.format(j), y[0], steps, h.sampling_rate)
                                     sw.add_figure('gt/y_spec_{}'.format(j), plot_spectrogram(y_mel[0].cpu()), steps)
 
-                                sw.add_audio('generated/y_hat_{}'.format(j), y_g_hat[0], steps, h.sampling_rate)
+                                sw.add_audio('generated/y_hat_{}'.format(j), y_g_hat[0].float(), steps, h.sampling_rate)
                                 y_hat_spec = mel_spectrogram(y_g_hat[:1].squeeze(1), h.n_fft, h.num_mels,
                                                              h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax)
                                 sw.add_figure('generated/y_hat_spec_{}'.format(j),
-                                              plot_spectrogram(y_hat_spec[:1].squeeze(0).cpu().numpy()), steps)
+                                              plot_spectrogram(y_hat_spec[:1].float().squeeze(0).cpu().numpy()), steps)
 
                         val_err = val_err_tot / (j + 1)
                         sw.add_scalar("validation/mel_spec_error", val_err, steps)
